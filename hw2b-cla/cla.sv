@@ -46,7 +46,7 @@ module gp8(input wire [7:0] gin, pin,
    wire gout_temp;
    wire pout_temp;
    wire [2:0] cout1, cout2;
-   wire c3, c6;
+   wire c4;
 
    gp4 instance1(.gin(gin[3:0]),
                  .pin(pin[3:0]),
@@ -55,18 +55,16 @@ module gp8(input wire [7:0] gin, pin,
                  .pout(pout_temp),
                  .cout(cout1));
 
-   assign c3 = gout_temp | (pout_temp & cin);
+   assign c4 = gout_temp | (pout_temp & cin);
 
    gp4 instance2(.gin(gin[7:4]),
                  .pin(pin[7:4]),
-                 .cin(c3),
+                 .cin(c4),
                  .gout(gout),
                  .pout(pout),
                  .cout(cout2));
 
-   assign c6 = gout | (pout & c3);
-
-   assign cout = {cout2, c3, cout1};
+   assign cout = {cout2, c4, cout1};
 
 endmodule
 
@@ -77,17 +75,54 @@ module cla
 
    wire [31:0] g, p;
 
+   wire [31:0] cin;
+
+   wire [7:0] gout, pout;
+
+   wire goutout, poutout;
+
+   wire [6:0] cout_temp;
+
    genvar i;
+
+   assign cout[0] = cin;
 
    for (i = 0; i < 32; i = i + 1) begin : g_gp1
       gp1 gp1_(.a(a[i]), .b(b[i]), .g(g[i]), .p(p[i]));
    end
 
-   
+   genvar k;
+
+   for (k = 0; k < 8; k = k + 1) begin : g_gp4
+      gp4 gp4_(.gin(g[4*(k+1)-1 : 4*(k)]),
+               .pin(p[4*(k+1)-1 : 4*(k)]),
+               .cin(cout[4*k]),
+               .gout(gout[k]),
+               .pout(pout[k]),
+               .cout(cout[4*(k+1)-1 : 4*(k) + 1]));
+   end
+
+   gp8 gp8_(.gin(gout),
+            .pin(pout),
+            .cin(cin),
+            .gout(goutout),
+            .pout(poutout),
+            .cout(cout_temp));
 
 
+   assign cout[28] = cout_temp[6];
+   assign cout[24] = cout_temp[5];
+   assign cout[20] = cout_temp[4];
+   assign cout[16] = cout_temp[3];
+   assign cout[12] = cout_temp[2];
+   assign cout[8] = cout_temp[1];
+   assign cout[4] = cout_temp[0];
 
+   genvar j;
 
+   assign sum[0] = a[0] ^ b[0] ^ cin;
 
-
+   for (j = 1; j < 32; j = j + 1) begin : g_addition
+      assign sum[j] = a[j] ^ b[j] ^ cout[j];
+   end
 endmodule
