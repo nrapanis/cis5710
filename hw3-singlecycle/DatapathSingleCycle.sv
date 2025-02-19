@@ -24,7 +24,22 @@ module RegFile (
   localparam int NumRegs = 32;
   logic [`REG_SIZE] regs[NumRegs];
 
-  // TODO: your code here
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
+  int i;
+
+  always_ff @(posedge clk) begin : blockName
+    regs[0] <= 32'd0;
+    if (rst) begin
+      for (i = 1; i < 32; i = i + 1) begin : g_do
+        regs[i] <= 32'd0;
+      end
+    end else begin
+      if (we && rd != 0) begin
+        regs[rd] <= rd_data;
+      end
+    end
+  end
 
 endmodule
 
@@ -68,7 +83,9 @@ module DatapathSingleCycle (
 
   // J - unconditional jumps
   wire [20:0] imm_j;
-  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {insn_from_imem[31:12], 1'b0};
+  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {
+    insn_from_imem[31:12], 1'b0
+  };
 
   wire [`REG_SIZE] imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
   wire [`REG_SIZE] imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
@@ -90,21 +107,21 @@ module DatapathSingleCycle (
   localparam bit [`OPCODE_SIZE] OpAuipc = 7'b00_101_11;
   localparam bit [`OPCODE_SIZE] OpLui = 7'b01_101_11;
 
-  wire insn_lui   = insn_opcode == OpLui;
+  wire insn_lui = insn_opcode == OpLui;
   wire insn_auipc = insn_opcode == OpAuipc;
-  wire insn_jal   = insn_opcode == OpJal;
-  wire insn_jalr  = insn_opcode == OpJalr;
+  wire insn_jal = insn_opcode == OpJal;
+  wire insn_jalr = insn_opcode == OpJalr;
 
-  wire insn_beq  = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b000;
-  wire insn_bne  = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b001;
-  wire insn_blt  = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b100;
-  wire insn_bge  = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b101;
+  wire insn_beq = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b000;
+  wire insn_bne = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b001;
+  wire insn_blt = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b100;
+  wire insn_bge = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b101;
   wire insn_bltu = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b110;
   wire insn_bgeu = insn_opcode == OpBranch && insn_from_imem[14:12] == 3'b111;
 
-  wire insn_lb  = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b000;
-  wire insn_lh  = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b001;
-  wire insn_lw  = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b010;
+  wire insn_lb = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b000;
+  wire insn_lh = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b001;
+  wire insn_lw = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b010;
   wire insn_lbu = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b100;
   wire insn_lhu = insn_opcode == OpLoad && insn_from_imem[14:12] == 3'b101;
 
@@ -112,12 +129,12 @@ module DatapathSingleCycle (
   wire insn_sh = insn_opcode == OpStore && insn_from_imem[14:12] == 3'b001;
   wire insn_sw = insn_opcode == OpStore && insn_from_imem[14:12] == 3'b010;
 
-  wire insn_addi  = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b000;
-  wire insn_slti  = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b010;
+  wire insn_addi = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b000;
+  wire insn_slti = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b010;
   wire insn_sltiu = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b011;
-  wire insn_xori  = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b100;
-  wire insn_ori   = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b110;
-  wire insn_andi  = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b111;
+  wire insn_xori = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b100;
+  wire insn_ori = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b110;
+  wire insn_andi = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b111;
 
   wire insn_slli = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b001 && insn_from_imem[31:25] == 7'd0;
   wire insn_srli = insn_opcode == OpRegImm && insn_from_imem[14:12] == 3'b101 && insn_from_imem[31:25] == 7'd0;
@@ -147,7 +164,7 @@ module DatapathSingleCycle (
   wire insn_fence = insn_opcode == OpMiscMem;
 
   // this code is only for simulation, not synthesis
-  `ifndef SYNTHESIS
+`ifndef SYNTHESIS
   `include "RvDisassembler.sv"
   string disasm_string;
   always_comb begin
@@ -159,7 +176,7 @@ module DatapathSingleCycle (
   for (i = 0; i < 32; i = i + 1) begin : gen_disasm
     assign disasm_wire[(((i+1))*8)-1:((i)*8)] = disasm_string[31-i];
   end
-  `endif
+`endif
 
   // program counter
   logic [`REG_SIZE] pcNext, pcCurrent;
@@ -187,35 +204,128 @@ module DatapathSingleCycle (
   end
 
   // NOTE: don't rename your RegFile instance as the tests expect it to be `rf`
-  // TODO: you will need to edit the port connections, however.
   wire [`REG_SIZE] rs1_data;
   wire [`REG_SIZE] rs2_data;
   RegFile rf (
-    .clk(clk),
-    .rst(rst),
-    .we(1'b0),
-    .rd(0),
-    .rd_data(0),
-    .rs1(0),
-    .rs2(0),
-    .rs1_data(rs1_data),
-    .rs2_data(rs2_data));
+      .clk(clk),
+      .rst(rst),
+      .we(we),
+      .rd(insn_rd),
+      .rd_data(rd_data),
+      .rs1(insn_rs1),
+      .rs2(insn_rs2),
+      .rs1_data(rs1_data),
+      .rs2_data(rs2_data)
+  );
+
+  cla adder_ (
+      .a  (additive_a),
+      .b  (additive_b),
+      .cin(cin),
+      .sum(sum)
+  );
+
+  logic [31:0] additive_a, additive_b, sum;
+  logic cin;
 
   logic illegal_insn;
+  logic we;
+  logic [`REG_SIZE] rd_data;
+
 
   always_comb begin
     illegal_insn = 1'b0;
+    we = 1'b0;
+    rd_data = 32'b0;
+    halt = 1'b0;
+    pcNext = pcCurrent + 4;
+    cin = 0;
+    additive_a = 32'd0;
+    additive_b = 32'd0;
 
     case (insn_opcode)
       OpLui: begin
-        // TODO: start here by implementing lui
+        we = 1;
+        rd_data = insn_from_imem[31:12] << 12;
+      end
+      OpRegImm: begin
+        we = 1;
+        if (insn_addi) begin
+          additive_a = rs1_data;
+          additive_b = imm_i_sext;
+          rd_data = sum;
+        end else if (insn_slti) begin
+          rd_data = $signed(rs1_data) < $signed(imm_i_sext) ? 32'd1 : 32'd0;
+        end else if (insn_sltiu) begin
+          rd_data = rs1_data < imm_i_sext ? 32'd1 : 32'd0;
+        end else if (insn_xori) begin
+          rd_data = rs1_data ^ imm_i_sext;
+        end else if (insn_ori) begin
+          rd_data = rs1_data | imm_i_sext;
+        end else if (insn_andi) begin
+          rd_data = rs1_data & imm_i_sext;
+        end else if (insn_slli) begin
+          rd_data = rs1_data << imm_i_sext[4:0];
+        end else if (insn_srli) begin
+          rd_data = rs1_data >> imm_i_sext[4:0];
+        end else if (insn_srai) begin
+          rd_data = $unsigned($signed(rs1_data) >>> imm_i_sext[4:0]);
+        end
+      end
+      OpRegReg: begin
+        we = 1;
+        if (insn_add) begin
+          additive_a = rs1_data;
+          additive_b = rs2_data;
+          rd_data = sum;
+        end else if (insn_sub) begin
+          additive_a = rs1_data;
+          additive_b = ~rs2_data;
+          cin = 1;
+          rd_data = sum;
+        end else if (insn_sll) begin
+          rd_data = rs1_data << rs2_data[4:0];
+        end else if (insn_slt) begin
+          rd_data = $signed(rs1_data) < $signed(rs2_data) ? 32'd1 : 32'd0;
+        end else if (insn_sltu) begin
+          rd_data = rs1_data < rs2_data ? 32'd1 : 32'd0;
+        end else if (insn_xor) begin
+          rd_data = rs1_data ^ rs2_data;
+        end else if (insn_srl) begin
+          rd_data = rs1_data >> rs2_data[4:0];
+        end else if (insn_sra) begin
+          rd_data = $unsigned($signed(rs1_data) >>> rs2_data[4:0]);
+        end else if (insn_or) begin
+          rd_data = rs1_data | rs2_data;
+        end else if (insn_and) begin
+          rd_data = rs1_data & rs2_data;
+        end
+      end
+      OpBranch: begin
+        if (insn_beq && (rs1_data == rs2_data)) begin
+          pcNext = pcCurrent + (imm_b_sext);
+        end else if (insn_bne && (rs1_data != rs2_data)) begin
+          pcNext = pcCurrent + (imm_b_sext);
+        end else if (insn_blt && ($signed(rs1_data) < $signed(rs2_data))) begin
+          pcNext = pcCurrent + (imm_b_sext);
+        end else if (insn_bge && ($signed(rs1_data) >= $signed(rs2_data))) begin
+          pcNext = pcCurrent + (imm_b_sext);
+        end else if (insn_bltu && (rs1_data < rs2_data)) begin
+          pcNext = pcCurrent + (imm_b_sext);
+        end else if (insn_bgeu && (rs1_data >= rs2_data)) begin
+          pcNext = pcCurrent + (imm_b_sext);
+        end
+      end
+      OpEnviron: begin
+        if (insn_ecall) begin
+          halt = 1;
+        end
       end
       default: begin
         illegal_insn = 1'b1;
       end
     endcase
   end
-
 endmodule
 
 /* A memory module that supports 1-cycle reads and writes, with one read-only port
@@ -326,16 +436,16 @@ module Processor (
   MemorySingleCycle #(
       .NUM_WORDS(8192)
   ) memory (
-      .rst      (rst),
-      .clock_mem (clock_mem),
+      .rst                (rst),
+      .clock_mem          (clock_mem),
       // imem is read-only
-      .pc_to_imem(pc_to_imem),
-      .insn_from_imem(insn_from_imem),
+      .pc_to_imem         (pc_to_imem),
+      .insn_from_imem     (insn_from_imem),
       // dmem is read-write
-      .addr_to_dmem(mem_data_addr),
+      .addr_to_dmem       (mem_data_addr),
       .load_data_from_dmem(mem_data_loaded_value),
       .store_data_to_dmem (mem_data_to_write),
-      .store_we_to_dmem  (mem_data_we)
+      .store_we_to_dmem   (mem_data_we)
   );
 
   DatapathSingleCycle datapath (

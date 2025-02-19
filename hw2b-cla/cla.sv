@@ -75,7 +75,7 @@ module cla
 
    wire [31:0] g, p;
 
-   wire [31:0] cin;
+   wire [31:0] cout;
 
    wire [7:0] gout, pout;
 
