@@ -342,20 +342,20 @@ RV_TEST_BINARIES = [
     cu.RISCV_TESTS_PATH / 'rv32ui-p-auipc', # needs JAL
 
     cu.RISCV_TESTS_PATH / 'rv32ui-p-lb', # 31
-    cu.RISCV_TESTS_PATH / 'rv32ui-p-lbu',
+    cu.RISCV_TESTS_PATH / 'rv32ui-p-lbu', # <- START
     cu.RISCV_TESTS_PATH / 'rv32ui-p-lh',
     cu.RISCV_TESTS_PATH / 'rv32ui-p-lhu',
     cu.RISCV_TESTS_PATH / 'rv32ui-p-lw',
     
     cu.RISCV_TESTS_PATH / 'rv32ui-p-sb', # 36
     cu.RISCV_TESTS_PATH / 'rv32ui-p-sh',
-    cu.RISCV_TESTS_PATH / 'rv32ui-p-sw',
+    cu.RISCV_TESTS_PATH / 'rv32ui-p-sw', # <- END
 
     cu.RISCV_TESTS_PATH / 'rv32um-p-mul', # 39
     cu.RISCV_TESTS_PATH / 'rv32um-p-mulh',
     cu.RISCV_TESTS_PATH / 'rv32um-p-mulhsu',
     cu.RISCV_TESTS_PATH / 'rv32um-p-mulhu',
-    cu.RISCV_TESTS_PATH / 'rv32um-p-div', # 43
+    cu.RISCV_TESTS_PATH / 'rv32um-p-div', # 43 <- FUCKED UP
     cu.RISCV_TESTS_PATH / 'rv32um-p-divu',
     cu.RISCV_TESTS_PATH / 'rv32um-p-rem',
     cu.RISCV_TESTS_PATH / 'rv32um-p-remu',

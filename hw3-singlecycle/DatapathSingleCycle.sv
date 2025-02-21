@@ -100,7 +100,7 @@ module DatapathSingleCycle (
   localparam bit [`OPCODE_SIZE] OpMiscMem = 7'b00_011_11;
   localparam bit [`OPCODE_SIZE] OpJal = 7'b11_011_11;
 
-  localparam bit [`OPCODE_SIZE] OpRegImm = 7'b00_100_11;
+  localparam bit [`OPCODE_SIZE] OpRegImm = 7'b00_100_11;  // DONE
   localparam bit [`OPCODE_SIZE] OpRegReg = 7'b01_100_11;
   localparam bit [`OPCODE_SIZE] OpEnviron = 7'b11_100_11;
 
@@ -217,21 +217,35 @@ module DatapathSingleCycle (
       .rs1_data(rs1_data),
       .rs2_data(rs2_data)
   );
+  logic illegal_insn;
+  logic we;
+  logic [`REG_SIZE] rd_data;
 
-  cla adder_ (
+  cla adder (
       .a  (additive_a),
       .b  (additive_b),
       .cin(cin),
       .sum(sum)
   );
-
   logic [31:0] additive_a, additive_b, sum;
   logic cin;
 
-  logic illegal_insn;
-  logic we;
-  logic [`REG_SIZE] rd_data;
+  divider_unsigned divider_unsigned (
+      .i_dividend (i_dividend),
+      .i_divisor  (i_divisor),
+      .o_remainder(o_remainder),
+      .o_quotient (o_quotient)
+  );
 
+  logic [31:0] i_dividend, i_divisor, o_remainder, o_quotient;
+
+  wire divisor_sign = rs2_data[31];
+  wire dividend_sign = rs1_data[31];
+
+  wire [31:0] divisor_abs = divisor_sign ? -rs2_data : rs2_data;
+  wire [31:0] divident_abs = dividend_sign ? -rs1_data : rs1_data;
+
+  logic [63:0] extended_product;
 
   always_comb begin
     illegal_insn = 1'b0;
@@ -242,11 +256,50 @@ module DatapathSingleCycle (
     cin = 0;
     additive_a = 32'd0;
     additive_b = 32'd0;
+    extended_product = 64'd0;
+    i_dividend = 32'd0;
+    i_divisor = 32'd0;
 
     case (insn_opcode)
       OpLui: begin
         we = 1;
         rd_data = insn_from_imem[31:12] << 12;
+      end
+      OpAuipc: begin
+        we = 1;
+        rd_data = pcCurrent + {insn_from_imem[31:12], 12'b0};
+      end
+      OpJal: begin
+        we = 1;
+        rd_data = pcCurrent + 4;
+        pcNext = pcCurrent + imm_j_sext;
+      end
+      OpJalr: begin
+        we = 1;
+        rd_data = pcCurrent + 4;
+        pcNext = (rs1_data + imm_i_sext) & ~32'h1;
+      end
+      OpLoad: begin
+        if (insn_lb) begin
+          // TODO
+        end else if (insn_lh) begin
+          // TODO
+        end else if (insn_lw) begin
+          // TODO
+        end else if (insn_lbu) begin
+          // TODO
+        end else if (insn_lhu) begin
+          // TODO
+        end
+      end
+      OpStore: begin
+        if (insn_sb) begin
+          // TODO
+        end else if (insn_sh) begin
+          // TODO
+        end else if (insn_sw) begin
+          // TODO
+        end
       end
       OpRegImm: begin
         we = 1;
@@ -299,6 +352,47 @@ module DatapathSingleCycle (
           rd_data = rs1_data | rs2_data;
         end else if (insn_and) begin
           rd_data = rs1_data & rs2_data;
+        end else if (insn_mul) begin
+          extended_product = {{32{1'b0}}, rs1_data} * {{32{1'b0}}, rs2_data};
+          rd_data = extended_product[31:0];
+        end else if (insn_mulh) begin
+          extended_product = {{32{rs1_data[31]}}, rs1_data} * {{32{rs2_data[31]}}, rs2_data};
+          rd_data = extended_product[63:32];
+        end else if (insn_mulhsu) begin
+          extended_product = {{32{rs1_data[31]}}, rs1_data} * {32'b0, rs2_data};
+          rd_data = extended_product[63:32];
+        end else if (insn_mulhu) begin
+          extended_product = {32'b0, rs1_data} * {32'b0, rs2_data};
+          rd_data = extended_product[63:32];
+        end else if (insn_div) begin // TODO WTF
+          i_dividend = divident_abs;
+          i_divisor  = divisor_abs;
+
+          if (rs2_data == 0) begin
+            rd_data = 32'hFFFFFFFF;
+          end else if (rs1_data == 32'h80000000 && rs2_data == 32'hFFFF_FFFF) begin
+            rd_data = 32'h7FFF_FFFF;
+          end else begin
+            rd_data = (divisor_sign ^ dividend_sign) ? -o_quotient : o_quotient;
+          end
+        end else if (insn_divu) begin
+          i_dividend = rs1_data;
+          i_divisor = rs2_data;
+          rd_data = o_quotient;
+        end else if (insn_rem) begin
+          i_dividend = divident_abs;
+          i_divisor  = divisor_abs;
+          if (rs2_data == 0) begin
+            rd_data = rs1_data;
+          end else if (rs1_data == 32'h80000000 && rs2_data == 32'hFFFF_FFFF) begin
+            rd_data = 32'b0;
+          end else begin
+            rd_data = dividend_sign ? -o_remainder : o_remainder;
+          end
+        end else if (insn_remu) begin
+          i_dividend = rs1_data;
+          i_divisor = rs2_data;
+          rd_data = o_remainder;
         end
       end
       OpBranch: begin
