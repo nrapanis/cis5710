@@ -1,23 +1,129 @@
-use std::cmp::{max, min};
-use std::thread;
-use std::time::Duration;
-use ascii::AsciiStr;
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
-use rand::Rng;
+#![no_std]
+#![no_main]
 
-const SCREEN_WIDTH: usize = 320;
-const SCREEN_HEIGHT: usize = 240;
-const TILE_SIZE: usize = 32; // Each tile is 32x32 pixels
-const GRID_WIDTH: usize = 6;
-const GRID_HEIGHT: usize = 7;
-const X_MARGIN: usize = 0;
-const Y_MARGIN: usize = (SCREEN_HEIGHT - (TILE_SIZE * GRID_HEIGHT)) / 2;
-const TITLE0_LOCATION: (usize,usize) = (210,Y_MARGIN + 32);
-const TITLE1_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,Y_MARGIN + 32 + 8);
-const SCORE_LABEL_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,TITLE1_LOCATION.1 + (3*8));
-const SCORE_VALUE_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,SCORE_LABEL_LOCATION.1 + 8);
-const MOVE_SCORE0_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,SCORE_VALUE_LOCATION.1 + 8);
-const MOVE_SCORE1_LOCATION: (usize,usize) = (TITLE0_LOCATION.0 + 8,SCORE_VALUE_LOCATION.1 + 8);
+use core::arch::asm;
+use core::cmp::{max, min};
+use core::panic::PanicInfo;
+use core::ptr::{read_volatile, write_volatile};
+use core::hint;
+use ascii::AsciiStr;
+
+use bitfield_struct::bitfield;
+
+const MMAP_LEDS: *mut u8      = 0xFF002000 as *mut u8;
+#[allow(dead_code)]
+const MMAP_BUTTONS: *const u8 = 0xFF001000 as *const u8;
+const MMAP_USB: *const u16    = 0xFF004000 as *const u16;
+const MMAP_RNG: *const u32    = 0xFF005000 as *const u32;
+const MMAP_HDMI: *mut u8      = 0xFF100000 as *mut u8;
+
+#[bitfield(u16, debug=false, defmt=false)]
+struct UsbGamepadInput {
+    /// The first field occupies the least-significant bit
+    /// Booleans are 1 bit in size
+    start: bool,
+    select: bool,
+    y: bool,
+    x: bool,
+    b: bool,
+    a: bool,
+    down: bool,
+    up: bool,
+    right: bool,
+    left: bool,
+    #[bits(6)]
+    _unused: usize
+}
+
+#[bitfield(u8, debug=false, defmt=false)]
+struct BoardButtonInput {
+    /// The first field occupies the least-significant bit
+    /// Booleans are 1 bit in size
+    pwr: bool,
+    b1: bool,
+    b2: bool,
+    b3: bool,
+    b4: bool,
+    b5: bool,
+    b6: bool,
+    _unused: bool
+}
+
+#[bitfield(u8, debug=false, defmt=false)]
+struct LedOutput {
+    /// The first field occupies the least-significant bit
+    /// Booleans are 1 bit in size
+    d0: bool,
+    d1: bool,
+    d2: bool,
+    d3: bool,
+    d4: bool,
+    d5: bool,
+    d6: bool,
+    d7: bool
+}
+
+// TOOD: reset doesn't work if we use 0xFFFF_FFFC...
+const STACK_START: u32 = 0xFFFF_FFFC;
+// const STACK_START: u32 = 0xFFFF_FEFC;
+// const STACK_START: u32 = 0x7EFC;
+
+#[link_section = ".start"]
+#[no_mangle]
+pub fn _start() -> ! {
+    // setup stack pointer sp. NB: stack grows down (to smaller addresses)
+    unsafe {
+        asm!(
+        "mv sp, {0}",
+        in(reg) STACK_START
+        );
+    }
+
+    main();
+}
+
+#[inline(never)]
+fn stack_check() {
+    let sp: u32;
+    unsafe {
+        asm!(
+        "mv {0}, sp",
+        out(reg) sp
+        );
+    }
+    // NB: This is where .rodata data ends in memory. Compute this from `readelf -e` output
+    if sp <= (STACK_START - 0x1800) { // 6KB stack
+        unsafe {
+            write_volatile(MMAP_LEDS, 0xAA);
+        }
+        panic!();
+    }
+}
+
+fn write_byte(value: u8, address: *mut u8) {
+    unsafe { write_volatile(address, value); }
+}
+
+fn wait_for_millis(millis: usize) {
+    for _ in 0..(millis * 6000) {
+        hint::spin_loop();
+    }
+}
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    // if code panics, flash all LEDs on and off
+    loop {
+        unsafe {
+            write_volatile(MMAP_LEDS, 0xFF);
+        }
+        wait_for_millis(100);
+        unsafe {
+            write_volatile(MMAP_LEDS, 0x00);
+        }
+        wait_for_millis(100);
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tile {
@@ -30,20 +136,11 @@ enum Tile {
 }
 
 impl Tile {
-    fn random2(exclude: Option<Tile>, exclude2: Option<Tile>) -> Tile {
-        let all_tiles = [Tile::Red, Tile::Orange, Tile::Yellow, Tile::Green, Tile::Blue, Tile::Purple];
-        for tile in all_tiles {
-            if (exclude.is_none() || exclude.unwrap() != tile) &&
-                (exclude2.is_none() || exclude2.unwrap() != tile) {
-                return tile
-            }
-        }
-        Tile::Blue
-    }
     fn random(exclude: Option<Tile>, exclude2: Option<Tile>) -> Tile {
         let mut tile;
         loop {
-            tile = match rand::thread_rng().gen_range(0..6) {
+            let random = unsafe { read_volatile(MMAP_RNG) };
+            tile = match random % 6 {
                 0 => Tile::Red,
                 1 => Tile::Orange,
                 2 => Tile::Yellow,
@@ -59,47 +156,54 @@ impl Tile {
     }
 }
 
+const SCREEN_WIDTH: usize = 320;
+const SCREEN_HEIGHT: usize = 240;
+const TILE_SIZE: usize = 32; // Each tile is 32x32 pixels
+const GRID_WIDTH: usize = 6;
+const GRID_HEIGHT: usize = 7;
+const X_MARGIN: usize = 0;
+const Y_MARGIN: usize = (SCREEN_HEIGHT - (TILE_SIZE * GRID_HEIGHT)) / 2;
+const TITLE0_LOCATION: (usize,usize) = (210,Y_MARGIN + 32);
+const TITLE1_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,Y_MARGIN + 32 + 8);
+const SCORE_LABEL_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,TITLE1_LOCATION.1 + (3*8));
+const SCORE_VALUE_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,SCORE_LABEL_LOCATION.1 + 8);
+const MOVE_SCORE0_LOCATION: (usize,usize) = (TITLE0_LOCATION.0,SCORE_VALUE_LOCATION.1 + 8);
+const MOVE_SCORE1_LOCATION: (usize,usize) = (TITLE0_LOCATION.0 + 8,SCORE_VALUE_LOCATION.1 + 8);
+
 const BLACK: u8 = 0x00;
 const WHITE: u8 = 0xFF;
+const BACKGROUND_COLOR: u8 = WHITE;
 const CURSOR_COLOR: u8 = BLACK;
 
 type FrameBuffer = [[u8; SCREEN_WIDTH]; SCREEN_HEIGHT];
-type WindowBuffer = [[u32; SCREEN_WIDTH]; SCREEN_HEIGHT];
 type TileGrid = [[Tile; GRID_WIDTH]; GRID_HEIGHT];
+type MatchGrid = [[bool; GRID_WIDTH]; GRID_HEIGHT];
 
-fn main() {
-    let mut window = Window::new(
-        "Candy Crvsh",
-        SCREEN_WIDTH,
-        SCREEN_HEIGHT,
-        WindowOptions::default(),
-    )
-        .unwrap_or_else(|e| {
-            panic!("{}", e);
-        });
+#[no_mangle]
+pub fn main() -> ! {
+    stack_check();
 
     // frame buffer
-    let mut frame_buffer: FrameBuffer = [[BLACK; SCREEN_WIDTH]; SCREEN_HEIGHT];
-    let mut window_buffer: WindowBuffer = [[0; SCREEN_WIDTH]; SCREEN_HEIGHT];
+    let mut screen: &mut FrameBuffer = unsafe { &mut *(MMAP_HDMI as *mut FrameBuffer) };
 
-    // game data structures
-    let mut grid: TileGrid = [[Tile::Blue; GRID_WIDTH]; GRID_HEIGHT];
-    let mut matches: [[bool; GRID_WIDTH]; GRID_HEIGHT] = [[false; GRID_WIDTH]; GRID_HEIGHT];
-    let mut selected_x: usize = 3;
-    let mut selected_y: usize = 3;
-    let mut score: usize = 0;
-
-    // clear screen to white
+    // clear screen
     for y in 0..SCREEN_HEIGHT {
         for x in 0..SCREEN_WIDTH {
-            frame_buffer[y][x] = WHITE;
+            write_byte(BACKGROUND_COLOR, &mut screen[y as usize][x as usize]);
         }
     }
 
     // render title
-    render_text(" Welcome to", BLACK, &mut frame_buffer, TITLE0_LOCATION);
-    render_text("Candy Crvsh!", BLACK, &mut frame_buffer, TITLE1_LOCATION);
-    render_text("score:", BLACK, &mut frame_buffer, SCORE_LABEL_LOCATION);
+    render_text(" Welcome to", BLACK, &mut screen, TITLE0_LOCATION);
+    render_text("Candy Crvsh!", BLACK, &mut screen, TITLE1_LOCATION);
+    render_text("score:", BLACK, &mut screen, SCORE_LABEL_LOCATION);
+
+    // game data structures
+    let mut grid: TileGrid = [[Tile::Yellow; GRID_WIDTH]; GRID_HEIGHT];
+    let mut matches: MatchGrid = [[false; GRID_WIDTH]; GRID_HEIGHT];
+    let mut selected_x: usize = 3;
+    let mut selected_y: usize = 3;
+    let mut score: usize = 0;
 
     // initialize grid
     for y in 0..GRID_HEIGHT {
@@ -116,24 +220,79 @@ fn main() {
         }
     }
 
-    while window.is_open() && !window.is_key_down(Key::Escape) {
+    let mut gamepad_prior = UsbGamepadInput::from(0);
+    loop {
+        let mut gamepad = UsbGamepadInput::from(0);
+
+        // check for gamepad button presses
+        let gamepad_now = UsbGamepadInput::from(unsafe {read_volatile(MMAP_USB)});
+        if !gamepad_prior.up() && gamepad_now.up() {
+            gamepad_prior.set_up(true);
+        } else if gamepad_prior.up() && !gamepad_now.up() {
+            gamepad_prior.set_up(false);
+            gamepad.set_up(true); // record button press event
+        }
+        if !gamepad_prior.down() && gamepad_now.down() {
+            gamepad_prior.set_down(true);
+        } else if gamepad_prior.down() && !gamepad_now.down() {
+            gamepad_prior.set_down(false);
+            gamepad.set_down(true); // record button press event
+        }
+        if !gamepad_prior.left() && gamepad_now.left() {
+            gamepad_prior.set_left(true);
+        } else if gamepad_prior.left() && !gamepad_now.left() {
+            gamepad_prior.set_left(false);
+            gamepad.set_left(true); // record button press event
+        }
+        if !gamepad_prior.right() && gamepad_now.right() {
+            gamepad_prior.set_right(true);
+        } else if gamepad_prior.right() && !gamepad_now.right() {
+            gamepad_prior.set_right(false);
+            gamepad.set_right(true); // record button press event
+        }
+        if !gamepad_prior.x() && gamepad_now.x() {
+            gamepad_prior.set_x(true);
+        } else if gamepad_prior.x() && !gamepad_now.x() {
+            gamepad_prior.set_x(false);
+            gamepad.set_x(true); // record button press event
+        }
+        if !gamepad_prior.y() && gamepad_now.y() {
+            gamepad_prior.set_y(true);
+        } else if gamepad_prior.y() && !gamepad_now.y() {
+            gamepad_prior.set_y(false);
+            gamepad.set_y(true); // record button press event
+        }
+        if !gamepad_prior.a() && gamepad_now.a() {
+            gamepad_prior.set_a(true);
+        } else if gamepad_prior.a() && !gamepad_now.a() {
+            gamepad_prior.set_a(false);
+            gamepad.set_a(true); // record button press event
+        }
+        if !gamepad_prior.b() && gamepad_now.b() {
+            gamepad_prior.set_b(true);
+        } else if gamepad_prior.b() && !gamepad_now.b() {
+            gamepad_prior.set_b(false);
+            gamepad.set_b(true); // record button press event
+        }
+
+        unsafe { write_volatile(MMAP_LEDS, 5); }
 
         // move cursor
-        if window.is_key_pressed(Key::Left, KeyRepeat::Yes) && selected_x > 0 {
+        if gamepad.left() && selected_x > 0 {
             selected_x -= 1;
         }
-        if window.is_key_pressed(Key::Right, KeyRepeat::Yes) && selected_x < GRID_WIDTH-1 {
+        if gamepad.right() && selected_x < GRID_WIDTH-1 {
             selected_x += 1;
         }
-        if window.is_key_pressed(Key::Up, KeyRepeat::Yes) && selected_y > 0 {
+        if gamepad.up() && selected_y > 0 {
             selected_y -= 1;
         }
-        if window.is_key_pressed(Key::Down, KeyRepeat::Yes) && selected_y < GRID_HEIGHT-1 {
+        if gamepad.down() && selected_y < GRID_HEIGHT-1 {
             selected_y += 1;
         }
 
         // swaps
-        if window.is_key_pressed(Key::W, KeyRepeat::No) && selected_y > 0 {
+        if gamepad.x() && selected_y > 0 {
             let orig_dst = grid[selected_y-1][selected_x];
             grid[selected_y-1][selected_x] = grid[selected_y][selected_x];
             grid[selected_y][selected_x] = orig_dst;
@@ -145,7 +304,7 @@ fn main() {
                 grid[selected_y-1][selected_x] = orig_dst;
             }
         }
-        if window.is_key_pressed(Key::A, KeyRepeat::No) && selected_x > 0 {
+        if gamepad.y() && selected_x > 0 {
             let orig_dst = grid[selected_y][selected_x-1];
             grid[selected_y][selected_x-1] = grid[selected_y][selected_x];
             grid[selected_y][selected_x] = orig_dst;
@@ -157,7 +316,7 @@ fn main() {
                 grid[selected_y][selected_x-1] = orig_dst;
             }
         }
-        if window.is_key_pressed(Key::S, KeyRepeat::No) && selected_y < GRID_HEIGHT-1 {
+        if gamepad.b() && selected_y < GRID_HEIGHT - 1 {
             let orig_dst = grid[selected_y+1][selected_x];
             grid[selected_y+1][selected_x] = grid[selected_y][selected_x];
             grid[selected_y][selected_x] = orig_dst;
@@ -169,7 +328,7 @@ fn main() {
                 grid[selected_y+1][selected_x] = orig_dst;
             }
         }
-        if window.is_key_pressed(Key::D, KeyRepeat::No) && selected_x < GRID_WIDTH - 1 {
+        if gamepad.a() && selected_x < GRID_WIDTH - 1 {
             let orig_dst = grid[selected_y][selected_x+1];
             grid[selected_y][selected_x+1] = grid[selected_y][selected_x];
             grid[selected_y][selected_x] = orig_dst;
@@ -181,6 +340,8 @@ fn main() {
                 grid[selected_y][selected_x+1] = orig_dst;
             }
         }
+
+        unsafe { write_volatile(MMAP_LEDS, 6); }
 
         while check_matches(&grid, Some(&mut matches)) {
             let mut match_xmin: usize = GRID_WIDTH * 2;
@@ -206,73 +367,52 @@ fn main() {
                 _ => 4,
             };
             score += move_score;
-            println!("score: {score} points");
 
             // render grid with tiles swapped
             render_grid(&grid,
                         Some((selected_x,selected_y)),
                         (0,0),
                         (GRID_WIDTH,GRID_HEIGHT),
-                        &mut frame_buffer,
+                        &mut screen,
                         (X_MARGIN, Y_MARGIN));
-            fb_to_wb(&frame_buffer, &mut window_buffer);
-            window.update_with_buffer(window_buffer.as_flattened(), SCREEN_WIDTH, SCREEN_HEIGHT).unwrap();
 
+            // render move score
             let mut buffer = itoa::Buffer::new();
             let move_score_str = buffer.format(move_score);
-            render_text("+", BLACK, &mut frame_buffer, MOVE_SCORE0_LOCATION);
-            render_text(move_score_str, BLACK, &mut frame_buffer, MOVE_SCORE1_LOCATION);
+            render_text("+", BLACK, &mut screen, MOVE_SCORE0_LOCATION);
+            render_text(move_score_str, BLACK, &mut screen, MOVE_SCORE1_LOCATION);
 
-            let shift = ((match_ymax - match_ymin) + 1) * TILE_SIZE;
+            let y_shift = ((match_ymax - match_ymin) + 1) * TILE_SIZE;
             let fb_xmin = (match_xmin * TILE_SIZE) + X_MARGIN;
+
             if match_ymin == 0 {
                 // match includes top row, show white pixels overwriting candies
                 let fb_xmax = (match_xmax * TILE_SIZE) + X_MARGIN + TILE_SIZE;
-                for y_shift in 0..=shift {
+                for ys in 0..=y_shift {
                     for x in fb_xmin..fb_xmax {
-                        frame_buffer[Y_MARGIN + y_shift][x] = WHITE;
+                        write_byte(WHITE, &mut screen[Y_MARGIN + ys][x]);
                     }
-                    fb_to_wb(&frame_buffer, &mut window_buffer);
-                    window.update_with_buffer(window_buffer.as_flattened(), SCREEN_WIDTH, SCREEN_HEIGHT).unwrap();
-                    thread::sleep(Duration::from_millis(10));
+                    wait_for_millis(5);
                 }
 
             } else {
                 // match was not in the top row, animate a region of falling tiles
-                let miny = 0;
-                let maxy = match_ymin * TILE_SIZE;
-                //println!("animated drop of {shift} pixels, from {match_xmin},{match_ymin} to {match_xmax},{match_ymax}");
-
-                for y_shift in 1..=shift {
+                for ys in 1..=y_shift {
                     render_grid(&grid,
                                 None,
                                 (match_xmin, 0),
-                                (match_xmax + 1, match_ymin),
-                                &mut frame_buffer,
-                                (fb_xmin, Y_MARGIN + y_shift));
-                    fb_to_wb(&frame_buffer, &mut window_buffer);
-                    window.update_with_buffer(window_buffer.as_flattened(), SCREEN_WIDTH, SCREEN_HEIGHT).unwrap();
-                    thread::sleep(Duration::from_millis(10));
+                                (match_xmax+1, match_ymin),
+                                &mut screen,
+                                (fb_xmin, Y_MARGIN + ys));
+                    wait_for_millis(5);
                 }
+
             }
+            wait_for_millis(250);
+            erase_text(4, WHITE, &mut screen, MOVE_SCORE0_LOCATION);
 
-
-            // for y_shift in 1..=shift {
-            //     for y in (miny..maxy).rev() {
-            //         for x in minx..maxx {
-            //             buffer[Y_MARGIN-1 + y + y_shift][x] = buffer[Y_MARGIN-1 + y + y_shift - 1][x];
-            //         }
-            //     }
-            //     fb_to_wb(&buffer, &mut window_buffer);
-            //     window.update_with_buffer(window_buffer.as_flattened(), SCREEN_WIDTH, SCREEN_HEIGHT).unwrap();
-            //     thread::sleep(Duration::from_millis(10));
-            // }
-            thread::sleep(Duration::from_millis(500));
-
-            let erase_move_score: &[u8] = &[0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01];
-            render_text(unsafe { core::str::from_utf8_unchecked(erase_move_score) }, WHITE, &mut frame_buffer, MOVE_SCORE0_LOCATION);
-
-            for y in 0..GRID_HEIGHT { // start at the bottom
+            // update grid
+            for y in 0..GRID_HEIGHT {
                 for x in 0..GRID_WIDTH {
                     if matches[y][x] {
                         // slide this column down
@@ -290,30 +430,27 @@ fn main() {
                     matches[y][x] = false;
                 }
             }
-        }
+        } // end check_match() loop
 
-        // Render the grid
-        // render_grid(&grid, &mut buffer, selected_x, selected_y);
+        // render the grid
         render_grid(&grid,
                     Some((selected_x,selected_y)),
                     (0,0),
                     (GRID_WIDTH,GRID_HEIGHT),
-                    &mut frame_buffer,
+                    &mut screen,
                     (X_MARGIN, Y_MARGIN));
-        fb_to_wb(&frame_buffer, &mut window_buffer);
-        window.update_with_buffer(window_buffer.as_flattened(), SCREEN_WIDTH, SCREEN_HEIGHT).unwrap();
 
         // render the score
-        let erase_score: &[u8] = &[0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01];
-        render_text(unsafe { core::str::from_utf8_unchecked(erase_score) }, WHITE, &mut frame_buffer, SCORE_VALUE_LOCATION);
+        erase_text(8, WHITE, &mut screen, SCORE_VALUE_LOCATION);
         let mut buffer = itoa::Buffer::new();
         let score_str = buffer.format(score);
-        render_text(score_str, BLACK, &mut frame_buffer, SCORE_VALUE_LOCATION);
-    }
+        render_text(score_str, BLACK, &mut screen, SCORE_VALUE_LOCATION);
+
+    } // end main loop
 }
 
-fn check_matches(grid: &[[Tile; GRID_WIDTH]; GRID_HEIGHT],
-                 mut matches: Option<&mut [[bool; GRID_WIDTH]; GRID_HEIGHT]>) -> bool {
+fn check_matches(grid: &TileGrid,
+                 mut matches: Option<&mut MatchGrid>) -> bool {
     let mut found_match: bool = false;
     // Check horizontal matches
     for y in 0..GRID_HEIGHT {
@@ -346,35 +483,8 @@ fn check_matches(grid: &[[Tile; GRID_WIDTH]; GRID_HEIGHT],
     found_match
 }
 
-//include!("../images/candies-24b.rs");
-include!("../images/candies-8b.rs");
-include!("../images/font.rs");
-
-fn pixel8_to_pixel32(pixel: u8) -> u32 {
-    // wire [ 7:0] red24 = {{3{red8[2]}}, {3{red8[1]}}, {2{red8[0]}}};
-    // wire [ 7:0] green24 = {{3{green8[2]}}, {3{green8[1]}}, {2{green8[0]}}};
-    // wire [ 7:0] blue24 = {{4{blue8[1]}}, {4{blue8[0]}}};
-    // Extract the red, green, and blue components
-    let red = (pixel >> 5) & 0b0000_0111;
-    let green = (pixel >> 2) & 0b0000_0111;
-    let blue = pixel & 0b0000_0011;
-
-    // Convert to 8-bit values
-    let red = (red << 5) | (red << 2) | (red >> 1);
-    let green = (green << 5) | (green << 2) | (green >> 1);
-    let blue = (blue << 6) | (blue << 4) | (blue << 2) | blue;
-
-    // Combine into a single u32 value
-    (red as u32) << 16 | (green as u32) << 8 | blue as u32
-}
-
-fn fb_to_wb(fbuf: &FrameBuffer, winbuf: &mut WindowBuffer) {
-    for y in 0..SCREEN_HEIGHT {
-        for x in 0..SCREEN_WIDTH {
-            winbuf[y][x] = pixel8_to_pixel32(fbuf[y][x]);
-        }
-    }
-}
+include!("../../images/candies-8b.rs");
+include!("../../images/font.rs");
 
 /// # Arguments
 /// * `grid_selected` x,y grid coordinates of the selected candy
@@ -404,8 +514,7 @@ fn render_grid(grid: &TileGrid,
                     let px = ((x - grid_tl.0) * TILE_SIZE) + tx;
                     let py = ((y - grid_tl.1) * TILE_SIZE) + ty;
                     assert!(px < SCREEN_WIDTH && py < SCREEN_HEIGHT);
-                    // write_byte(tile_pixels[ty][tx], &mut screen[render_start.1 + py as usize][render_start.0 + px as usize]);
-                    screen[render_start.1 + py][render_start.0 + px] = tile_pixels[ty][tx];
+                    write_byte(tile_pixels[ty][tx], &mut screen[render_start.1 + py][render_start.0 + px]);
                 }
             }
             if grid_selected.is_some() && (x,y) == grid_selected.unwrap() {
@@ -416,7 +525,8 @@ fn render_grid(grid: &TileGrid,
                             let px = ((x - grid_tl.0) * TILE_SIZE) + tx;
                             let py = ((y - grid_tl.1) * TILE_SIZE) + ty;
                             assert!(render_start.0 + px < SCREEN_WIDTH && render_start.1 + py < SCREEN_HEIGHT);
-                            screen[render_start.1 + py][render_start.0 + px] = CURSOR_COLOR;
+                            // screen[render_start.1 + py][render_start.0 + px] = CURSOR_COLOR;
+                            write_byte(CURSOR_COLOR, &mut screen[render_start.1 + py][render_start.0 + px])
                         }
                     }
                 }
@@ -441,51 +551,18 @@ fn render_text(s: &str, color: u8, screen: &mut FrameBuffer, render_start: (usiz
             for bx in (0..8).rev() {
                 let bit = (bitmap_row >> bx) & 1;
                 if 1 == bit {
-                    screen[render_start.1 + by][render_start.0 + (ci * 8) + bx] = color;
+                    write_byte(color, &mut screen[render_start.1 + by][render_start.0 + (ci * 8) + bx]);
                 }
             }
         }
     }
 }
 
-fn render_grid_old(grid: &TileGrid,
-                   buffer: &mut FrameBuffer,
-                   selected_x: usize,
-                   selected_y: usize) {
-
-    for y in 0..GRID_HEIGHT {
-        for x in 0..GRID_WIDTH {
-            let tile_pixels = match grid[y][x] {
-                Tile::Red => RED,
-                Tile::Orange => ORANGE,
-                Tile::Yellow => YELLOW,
-                Tile::Green => GREEN,
-                Tile::Blue => BLUE,
-                Tile::Purple => PURPLE,
-            };
-            for ty in 0..TILE_SIZE {
-                for tx in 0..TILE_SIZE {
-                    let px = x * TILE_SIZE + tx;
-                    let py = y * TILE_SIZE + ty;
-                    if px < SCREEN_WIDTH && py < SCREEN_HEIGHT {
-                        buffer[Y_MARGIN + py][X_MARGIN + px] = tile_pixels[ty][tx];
-                    }
-                }
-            }
-            if y == selected_y && x == selected_x {
-                // draw selection border
-                for ty in 0..TILE_SIZE {
-                    for tx in 0..TILE_SIZE {
-                        if ty <= 2 || ty >= TILE_SIZE - 3 || tx <= 2 || tx >= TILE_SIZE - 3 {
-                            let px = x * TILE_SIZE + tx;
-                            let py = y * TILE_SIZE + ty;
-                            if px < SCREEN_WIDTH && py < SCREEN_HEIGHT {
-                                buffer[Y_MARGIN + py][X_MARGIN + px] = 0;
-                            }
-                        }
-                    }
-                }
-            }
+/// Erase one line of text by writing `num_chars` 8x8 blocks of `color` pixels, starting at `render_start`
+fn erase_text(num_chars: usize, color: u8, screen: &mut FrameBuffer, render_start: (usize,usize)) {
+    for y in render_start.1..(render_start.1+8) {
+        for x in render_start.0..(num_chars*8) {
+            write_byte(color, &mut screen[y][x]);
         }
     }
 }

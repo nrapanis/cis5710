@@ -5,9 +5,9 @@ the code (PCs, global variables) match up with what our processor provides.
 
 MEMORY
 {
-    START : ORIGIN = 0x00000000, LENGTH = 64
-    CODE : ORIGIN = 0x00000040, LENGTH = 14K
-    DATA : ORIGIN = 0x00005000, LENGTH = 10K
+    START : ORIGIN = 0x00000000, LENGTH = 512
+    CODE :  ORIGIN = 0x00000200, LENGTH = 256
+    DATA :  ORIGIN = 0x00000300, LENGTH = 128
 }
 
 SECTIONS
@@ -15,6 +15,8 @@ SECTIONS
     .start : { *(.start*) } > START
     .text : { *(.text*) } > CODE
     .rodata : { *(.rodata*) } > DATA
+    .srodata : { *(.srodata*) } > DATA
     .bss : { *(.bss*) } > DATA
     .data : { *(.data*) } > DATA
+    .sdata : { *(.sdata*) } > DATA
 }
