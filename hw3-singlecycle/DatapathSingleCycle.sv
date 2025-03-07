@@ -242,23 +242,33 @@ module DatapathSingleCycle (
   wire divisor_sign = rs2_data[31];
   wire dividend_sign = rs1_data[31];
 
-  wire [31:0] divisor_abs = divisor_sign ? -rs2_data : rs2_data;
-  wire [31:0] divident_abs = dividend_sign ? -rs1_data : rs1_data;
+  wire [31:0] divisor_abs = divisor_sign ? (~rs2_data + 1'b1) : rs2_data;
+  wire [31:0] divident_abs = dividend_sign ? (~rs1_data + 1'b1) : rs1_data;
 
   logic [63:0] extended_product;
 
+  logic [1:0] sub_dest;
+  logic [31:0] mem_chosen_dest;
+  logic [31:0] mem_actual_dest;
+
   always_comb begin
-    illegal_insn = 1'b0;
-    we = 1'b0;
-    rd_data = 32'b0;
-    halt = 1'b0;
-    pcNext = pcCurrent + 4;
-    cin = 0;
-    additive_a = 32'd0;
-    additive_b = 32'd0;
-    extended_product = 64'd0;
-    i_dividend = 32'd0;
-    i_divisor = 32'd0;
+    illegal_insn       = 1'b0;
+    we                 = 1'b0;
+    rd_data            = 32'b0;
+    halt               = 1'b0;
+    pcNext             = pcCurrent + 4;
+    cin                = 0;
+    additive_a         = 32'd0;
+    additive_b         = 32'd0;
+    extended_product   = 64'd0;
+    i_dividend         = 32'd0;
+    i_divisor          = 32'd0;
+    sub_dest           = 2'b0;
+    mem_chosen_dest    = 32'b0;
+    mem_actual_dest    = 32'b0;
+    addr_to_dmem       = 32'd0;
+    store_data_to_dmem = 32'd0;
+    store_we_to_dmem   = 4'b0;
 
     case (insn_opcode)
       OpLui: begin
@@ -280,25 +290,116 @@ module DatapathSingleCycle (
         pcNext = (rs1_data + imm_i_sext) & ~32'h1;
       end
       OpLoad: begin
+        we = 1;
         if (insn_lb) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_i_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          if (sub_dest == 0) begin
+            rd_data = {{24{load_data_from_dmem[7]}}, load_data_from_dmem[7:0]};
+          end else if (sub_dest == 1) begin
+            rd_data = {{24{load_data_from_dmem[15]}}, load_data_from_dmem[15:8]};
+          end else if (sub_dest == 2) begin
+            rd_data = {{24{load_data_from_dmem[23]}}, load_data_from_dmem[23:16]};
+          end else if (sub_dest == 3) begin
+            rd_data = {{24{load_data_from_dmem[31]}}, load_data_from_dmem[31:24]};
+          end
         end else if (insn_lh) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_i_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          if (sub_dest == 0) begin
+            rd_data = {{16{load_data_from_dmem[15]}}, load_data_from_dmem[15:0]};
+          end else if (sub_dest == 2) begin
+            rd_data = {{16{load_data_from_dmem[31]}}, load_data_from_dmem[31:16]};
+          end
         end else if (insn_lw) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_i_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          rd_data = load_data_from_dmem;
         end else if (insn_lbu) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_i_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          if (sub_dest == 0) begin
+            rd_data = {24'b0, load_data_from_dmem[7:0]};
+          end else if (sub_dest == 1) begin
+            rd_data = {24'b0, load_data_from_dmem[15:8]};
+          end else if (sub_dest == 2) begin
+            rd_data = {24'b0, load_data_from_dmem[23:16]};
+          end else if (sub_dest == 3) begin
+            rd_data = {24'b0, load_data_from_dmem[31:24]};
+          end
         end else if (insn_lhu) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_i_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          if (sub_dest == 0) begin
+            rd_data = {16'b0, load_data_from_dmem[15:0]};
+          end else if (sub_dest == 2) begin
+            rd_data = {16'b0, load_data_from_dmem[31:16]};
+          end
         end
       end
       OpStore: begin
         if (insn_sb) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_s_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          if (sub_dest == 0) begin
+            store_data_to_dmem = {24'b0, rs2_data[7:0]};
+            store_we_to_dmem   = 4'b0001;
+          end else if (sub_dest == 1) begin
+            store_data_to_dmem = {16'b0, rs2_data[7:0], 8'b0};
+            store_we_to_dmem   = 4'b0010;
+          end else if (sub_dest == 2) begin
+            store_data_to_dmem = {8'b0, rs2_data[7:0], 16'b0};
+            store_we_to_dmem   = 4'b0100;
+          end else if (sub_dest == 3) begin
+            store_data_to_dmem = {rs2_data[7:0], 24'b0};
+            store_we_to_dmem   = 4'b1000;
+          end
         end else if (insn_sh) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_s_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+
+          if (sub_dest == 0) begin
+            store_data_to_dmem = {16'b0, rs2_data[15:0]};
+            store_we_to_dmem   = 4'b0011;
+          end else if (sub_dest == 2) begin
+            store_data_to_dmem = {rs2_data[15:0], 16'b0};
+            store_we_to_dmem   = 4'b1100;
+          end
         end else if (insn_sw) begin
-          // TODO
+          mem_actual_dest = rs1_data + imm_s_sext;
+          mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
+          sub_dest = mem_actual_dest[1:0];
+
+          addr_to_dmem = mem_chosen_dest;
+          store_data_to_dmem = rs2_data;
+          store_we_to_dmem = 4'b1111;
         end
       end
       OpRegImm: begin
@@ -364,16 +465,13 @@ module DatapathSingleCycle (
         end else if (insn_mulhu) begin
           extended_product = {32'b0, rs1_data} * {32'b0, rs2_data};
           rd_data = extended_product[63:32];
-        end else if (insn_div) begin // TODO WTF
+        end else if (insn_div) begin
           i_dividend = divident_abs;
           i_divisor  = divisor_abs;
-
           if (rs2_data == 0) begin
             rd_data = 32'hFFFFFFFF;
-          end else if (rs1_data == 32'h80000000 && rs2_data == 32'hFFFF_FFFF) begin
-            rd_data = 32'h7FFF_FFFF;
           end else begin
-            rd_data = (divisor_sign ^ dividend_sign) ? -o_quotient : o_quotient;
+            rd_data = (divisor_sign ^ dividend_sign) ? (~o_quotient + 1'b1) : o_quotient;
           end
         end else if (insn_divu) begin
           i_dividend = rs1_data;
@@ -384,10 +482,8 @@ module DatapathSingleCycle (
           i_divisor  = divisor_abs;
           if (rs2_data == 0) begin
             rd_data = rs1_data;
-          end else if (rs1_data == 32'h80000000 && rs2_data == 32'hFFFF_FFFF) begin
-            rd_data = 32'b0;
           end else begin
-            rd_data = dividend_sign ? -o_remainder : o_remainder;
+            rd_data = dividend_sign ? (~o_remainder + 1'b1) : o_remainder;
           end
         end else if (insn_remu) begin
           i_dividend = rs1_data;
