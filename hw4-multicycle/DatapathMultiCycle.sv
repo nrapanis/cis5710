@@ -168,7 +168,7 @@ module DatapathMultiCycle (
 
   // this code is only for simulation, not synthesis
 `ifndef SYNTHESIS
-  `include "RvDisassembler.sv"
+  `include "../hw3-singlecycle/RvDisassembler.sv"
   string disasm_string;
   always_comb begin
     disasm_string = rv_disasm(insn_from_imem);
@@ -188,9 +188,9 @@ module DatapathMultiCycle (
       pcCurrent <= 32'd0;
     end else begin
       if (dividing_halt && counter_data != 7) begin
-        pcNext <= pcCurrent;
+        pcCurrent <= pcCurrent;
       end else begin
-        pcNext <= pcCurrent + 4;
+        pcCurrent <= pcNext;
       end
     end
   end
@@ -261,7 +261,7 @@ module DatapathMultiCycle (
   logic [31:0] mem_chosen_dest;
   logic [31:0] mem_actual_dest;
   wire dividing_halt;
-  logic counter_data;
+  logic [2:0] counter_data;
 
   assign dividing_halt = insn_div | insn_divu | insn_rem | insn_remu;
 
