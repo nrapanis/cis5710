@@ -384,7 +384,7 @@ module DatapathPipelined (
       .rs2     (rs2),
       .rs2_data(rs2_data),
       .clk     (clk),
-      .we      (writeback_state.regFile_we),
+      .we      (memory_state.regFile_we), /////// TODO FUCKING CHANGE IT AT ONCE IT IS WRONG
       .rst     (rst)
   );
 
@@ -440,16 +440,7 @@ module DatapathPipelined (
       f_cycle_status <= CYCLE_NO_STALL;
     end else if (branch_taken) begin
       f_pc_current <= branch_target;
-      decode_state <= '{
-          pc: 0,
-          insn: 0,
-          cycle_status: CYCLE_RESET,
-          alu_ctl: ALU_ADD,
-          alu_input_control: 0,
-          regFile_we: 0,
-          mem_re: 0,
-          mem_we: 0
-      };
+
 
     end else begin
       f_cycle_status <= CYCLE_NO_STALL;
@@ -478,6 +469,18 @@ module DatapathPipelined (
   stage_decode_t decode_state;
   always_ff @(posedge clk) begin
     if (rst) begin
+      decode_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_RESET,
+          alu_ctl: ALU_ADD,
+          alu_input_control: 0,
+          regFile_we: 0,
+          mem_re: 0,
+          mem_we: 0
+      };
+          end else if (branch_taken) begin
+      f_pc_current <= branch_target;
       decode_state <= '{
           pc: 0,
           insn: 0,
