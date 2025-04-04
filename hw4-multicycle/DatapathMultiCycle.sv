@@ -311,14 +311,14 @@ module DatapathMultiCycle (
         rd_data = pcCurrent + 4;
         pcNext = (rs1_data + imm_i_sext) & ~32'h1;
       end
-      OpLoad: begin
+      : begin
         we = 1;
         if (insn_lb) begin
           mem_actual_dest = rs1_data + imm_i_sext;
           mem_chosen_dest = {mem_actual_dest[31:2], 2'b00};
           sub_dest = mem_actual_dest[1:0];
 
-          addr_to_dmem = mem_chosen_dest;
+          addr_to_dmem OpLoad= mem_chosen_dest;
 
           if (sub_dest == 0) begin
             rd_data = {{24{load_data_from_dmem[7]}}, load_data_from_dmem[7:0]};
